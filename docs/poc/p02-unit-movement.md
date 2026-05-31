@@ -66,3 +66,25 @@ function calcMoveRange(startHex, movePoints, terrainCosts, occupiedHexes):
 
 - qtgame-war `src/studio/lib/models/game.dart` GameState
 - qtgame-war `src/studio/lib/models/unit.dart` Unit
+
+## 实现记录
+
+**文件**：`examples/p02-unit-movement/index.html`
+
+**状态**：✓ 验收标准全部通过
+
+**实际实现**：
+- BFS 移动范围计算，`occupiedHexes` 用于友方阻挡检测
+- 移动范围显示为绿色半透明覆盖层，选中格黄色高亮
+- 点击单位选中 → 显示范围 → 点击可达格移动 → 标记 `hasActed`
+- 支持多单位，蓝色己方/红色敌方区分
+- 移动力数值显示在单位圆内
+
+**偏差**：
+- 未实现"格间过渡动画"（步骤 5）—— 移动是瞬移，动画放到 PoC 11
+- 未实现审计日志 —— 日志系统在 p04 中才引入，p02 作为独立示例保持简单
+
+**经验**：
+- BFS 在 9x11 网格上性能足够，无需优化
+- `occupied` Set 的字符串 key `"${q},${r}"` 比对象比较更简单可靠
+- 移动力直接显示在棋子上对调试极有帮助

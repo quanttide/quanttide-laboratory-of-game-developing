@@ -65,3 +65,23 @@ HexCell {
 
 - qtgame-war `src/studio/lib/models/battlefield.dart`
 - RedBlobGames: Hexagonal Grids
+
+## 实现记录
+
+**文件**：`examples/p01-hex-grid/index.html`
+
+**状态**：✓ 验收标准全部通过
+
+**实际实现**：
+- Canvas 2D，pointy_top 布局，边长 30px
+- 立方体坐标 (q, r, s) 完整实现，`hexToPixel` / `pixelToHex` / `cubeRound`
+- 悬停高亮（蓝色）+ 点击选中（绿色）+ 坐标文字显示
+- 窗口缩放通过监听 `resize` 事件重绘（未使用 viewBox，Canvas 直接重算尺寸）
+
+**偏差**：
+- 计划用 viewBox 实现缩放，实际使用 `resize` 事件 + 重绘，更简单且避免 Canvas 模糊
+- 未使用 `HexGrid` 类封装（直接在函数中实现），原型阶段函数式更轻量
+
+**经验**：
+- 9x11 网格性能无压力，Canvas 2D 是正确选择
+- `cubeRound` 是命中检测的关键，浮点误差会导致选中相邻格

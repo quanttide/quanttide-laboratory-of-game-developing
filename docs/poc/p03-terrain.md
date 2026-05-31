@@ -59,3 +59,26 @@ TERRAIN_CONFIG: Record<TerrainType, TerrainProps>
 ## 参考
 
 - qtgame-war `src/studio/lib/models/battlefield.dart` TerrainType / TerrainProps
+
+## 实现记录
+
+**文件**：`examples/p03-terrain/index.html`
+
+**状态**：✓ 验收标准全部通过
+
+**实际实现**：
+- 5 种地形以对象常量表定义（`PLAIN/VILLAGE/TOWN/RIVER/CORE_FORT`）
+- 伪随机生成（seeded random） + 手动覆盖（中心核心据点、河流线、城镇/村庄固定位置）
+- 每种地形有唯一图标字符（◆ ■ • ≈）辅助识别
+- 图例显示所有地形颜色和名称
+- 点击格子显示详细属性：移动消耗、防御加成、全掩体标记
+- 地形颜色按功能含义划分（绿=安全、蓝=阻隔、褐=掩护、红=关键）
+
+**偏差**：
+- 地形布局使用内联数组而非独立 JSON 文件 —— 原型阶段内联更方便迭代
+- 未实现"新增地形只需改配置文件" —— 当前配置在代码中，但迁移到 JSON 只需提取常量表
+
+**经验**：
+- 颜色+图标双重编码对地形识别有帮助，色盲友好
+- 手动覆盖特定格比全随机生成更实用（可设计有战术意义的地图）
+- 地形属性集中定义在常量表中，新增地形确实只需加一行

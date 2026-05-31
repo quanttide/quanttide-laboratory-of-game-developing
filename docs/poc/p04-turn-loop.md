@@ -73,3 +73,30 @@ Enemy Turn:
 
 - qtgame-war `src/studio/lib/models/game.dart` GamePhase
 - qtgame-war `src/studio/lib/controllers/game_controller.dart` endTurn
+
+## 实现记录
+
+**文件**：`examples/p04-turn-loop/index.html`
+
+**状态**：✓ 验收标准全部通过
+
+**实际实现**：
+- 7 阶段状态机（ASSESSMENT → INTENT → COMMAND → SIGNING → EXECUTION → ENEMY_TURN → GAME_OVER）
+- 按钮驱动阶段推进（评估 → 意图 → 命令 → 结束回合 → 签署 → 执行）
+- 阶段名称颜色编码，信息栏显示回合/阶段/兵力
+- AI 回合自动执行（向最近敌方移动一格），完成后切回玩家回合
+- 回合计数器 + 12 回合上限
+- 操作日志面板（滚动，追加每条操作记录）
+- `hasActed` 管理：单位行动后标记，回合结束未行动单位自动跳过
+- 游戏结束覆盖层
+
+**偏差**：
+- INTENT 和 SIGNING 阶段为占位，无实际 UI 交互（等待 PoC 09/10）
+- EXECUTION 阶段仅 800ms 延迟，无动画/战报（等待 PoC 11）
+- 未实现 `TurnManager` 策略模式 —— 当前为内联 switch，后续需要重构
+- 未实现胜利/失败条件（纯回合上限触发 GAME_OVER）
+
+**经验**：
+- 按钮驱动阶段推进可用，但 UX 不够流畅——"命令→结束回合→签署→执行" 四步点击太多
+- AI 回合需要视觉反馈（当前瞬移，玩家不知道发生了什么）
+- 日志面板对调试极有价值，所有 PoC 后续都应引入
