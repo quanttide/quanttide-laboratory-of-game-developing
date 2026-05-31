@@ -1,5 +1,8 @@
 # PoC 02 — 单位放置与移动
 
+- **依赖**：p01 六角格地图
+- **被依赖**：p04（回合流程），p05（攻击交互）
+
 ## 验证目标
 
 实现单位棋子在六角格地图上的放置、选择、移动范围计算和移动执行。
@@ -11,18 +14,19 @@ qtgame-war 使用 BFS 算法在六角格上计算移动范围，移动消耗取�
 ## 核心算法
 
 ```
-function calcMoveRange(startHex, movePoints, terrainCosts):
+function calcMoveRange(startHex, movePoints, terrainCosts, occupiedHexes):
     visited = {startHex: 0}
     queue = [startHex]
-    while queue:
-        hex = queue.dequeue()
+    while queue.length > 0:
+        hex = queue.shift()                       // 出队
         for neighbor in hex.neighbors:
+            if occupiedHexes.has(neighbor): continue  // 友方单位阻挡
             cost = terrainCosts[neighbor.terrain]
             newCost = visited[hex] + cost
-            if newCost <= movePoints and newCost < visited[neighbor]:
+            if newCost <= movePoints and (visited[neighbor] is undefined or newCost < visited[neighbor]):
                 visited[neighbor] = newCost
-                queue.enqueue(neighbor)
-    return visited.keys()
+                queue.push(neighbor)              // 入队
+    return Object.keys(visited)
 ```
 
 ## 交互流程
@@ -41,6 +45,7 @@ function calcMoveRange(startHex, movePoints, terrainCosts):
 4. 实现单位选择与取消选择
 5. 实现单位移动动画（格间过渡）
 6. 实现友方单位阻挡（不可穿越其他单位所在格）
+7. 实现审计日志记录（移动完成后写入 `UNIT_MOVED` 事件，为 PoC 13 提供数据源）
 
 ## 关键技术
 
@@ -55,6 +60,7 @@ function calcMoveRange(startHex, movePoints, terrainCosts):
 - [ ] 河流消耗 4 移动力，步兵无法穿越
 - [ ] 友方单位格不可通行
 - [ ] 移动后单位标记为已行动
+- [ ] 每次移动记录到审计日志（`UNIT_MOVED`）
 
 ## 参考
 

@@ -39,13 +39,15 @@ ReplayController {
 
   play(): void              // 从当前位置播放
   pause(): void             // 暂停
-  stepForward(): void       // 下一步
-  stepBackward(): void      // 上一步
+  stepForward(): void       // 下一步（增量执行下一条）
+  stepBackward(): void      // 上一步（用最近快照 + 增量重放到目标位置）
   jumpTo(turn): void        // 跳转到指定回合
   speedUp(): void           // 加速
   slowDown(): void          // 减速
 }
 ```
+
+**stepBackward 实现方案**：不存储每一步的反向操作。改用快照 + 增量重放——从最近快照出发，重放到目标索引位置。每 N=10 条记录创建一次全状态快照，空间换时间。
 
 ## 分支点标记
 

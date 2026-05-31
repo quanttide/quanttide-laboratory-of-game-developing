@@ -25,13 +25,16 @@ function aiTakeTurn(aiUnits, enemyUnits, battlefield):
     // Step 1: 寻找攻击目标
     targets = findAttackTargets(unit, enemyUnits)
     if targets.length > 0:
-      best = selectOptimalTarget(targets) // 最低血 + 最高击杀概率
+      best = selectOptimalTarget(targets) // 击杀概率 + 地形防御
       resolveCombat(unit, best)
       continue
 
-    // Step 2: 向最近敌人移动
+    // Step 2: 向最近敌人移动（优先选择有掩体的路径）
     nearest = findNearestEnemy(unit, enemyUnits)
-    path = findPath(unit, nearest, battlefield)
+    path = findPath(unit, nearest, battlefield, {
+      preferCover: true,         // 倾向走有防御加成的格子
+      avoidRiver: true           // 避免过河暴露
+    })
     if path.length > 0:
       moveTo(path[0]) // 移动一步（或尽可能远）
       if canAttackAfterMove:
@@ -50,9 +53,18 @@ function selectOptimalTarget(unit, targets):
   // 优先选择：击杀概率最高的目标
   // 平局时：选择血量最低的
   // 再平局：选择最近的
+  // 考虑目标地形防御：同等击杀概率下，选择防御最低的目标
   return targets
-    .map(t => ({ target: t, killProb: calcKillProbability(unit, t) }))
-    .sort((a, b) => b.killProb - a.killProb || a.target.hp - b.target.hp)
+    .map(t => ({
+      target: t,
+      killProb: calcKillProbability(unit, t),
+      terrainDefense: getTerrainDefense(t.coord)
+    }))
+    .sort((a, b) =>
+      b.killProb - a.killProb ||
+      a.terrainDefense - b.terrainDefense ||
+      a.target.hp - b.target.hp
+    )
     .first()
 ```
 
