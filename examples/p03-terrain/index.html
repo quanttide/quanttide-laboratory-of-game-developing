@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoC 03 — 地形系统</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+}
+h1 { font-size: 18px; margin-bottom: 4px; color: #a0a0c0; }
+.sub { font-size: 12px; color: #666; margin-bottom: 12px; }
+canvas { border: 1px solid #333; cursor: pointer; }
+#info {
+  margin-top: 12px;
+  font-size: 14px;
+  min-height: 20px;
+  text-align: center;
+}
+#legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #aaa;
+}
+.legend-color {
+  width: 14px;
+  height: 14px;
+  border: 1px solid #555;
+  border-radius: 2px;
+}
+</style>
+</head>
+<body>
+<h1>PoC 03 — 地形系统</h1>
+<div class="sub">5 种地形 | 点击查看属性</div>
+<canvas id="canvas"></canvas>
+<div id="info">点击格子查看地形属性</div>
+<div id="legend"></div>
+<script>
+// ---- 配置 ----
+const HEX_SIZE = 30;
+const GRID_COLS = 9;
+const GRID_ROWS = 11;
+const SEED = 42;
+
+// ---- 地形 ----
+const Terrain = {
+  PLAIN:      { id: 'PLAIN',      name: '平原',   color: '#5a8a5a', moveCost: 1, defense: 0, fullCover: false },
+  VILLAGE:    { id: 'VILLAGE',    name: '村庄',   color: '#8a7a5a', moveCost: 1, defense: 1, fullCover: false },
+  TOWN:       { id: 'TOWN',       name: '城镇',   color: '#7a6a4a', moveCost: 2, defense: 2, fullCover: false },
+  RIVER:      { id: 'RIVER',      name: '河流',   color: '#4a6a8a', moveCost: 4, defense: 0, fullCover: false },
+  CORE_FORT:  { id: 'CORE_FORT',  name: '核心据点', color: '#8a4a4a', moveCost: 3, defense: 4, fullCover: true },
+};
+
+const TERRAIN_LIST = Object.values(Terrain);
+
+// ---- 伪随机地形生成 ----
+function seededRandom(seed) {
+  let s = seed;
+  return function() {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return (s >>> 0) / 0xffffffff;
+  };
+}
+
+function generateTerrainMap(cols, rows) {
+  const rand = seededRandom(SEED);
+  const map = [];
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let q = 0; q < cols; q++) {
+      const v = rand();
+      if (v < 0.05) row.push(Terrain.CORE_FORT);
+      else if (v < 0.15) row.push(Terrain.TOWN);
+      else if (v < 0.30) row.push(Terrain.VILLAGE);
+      else if (v < 0.40) row.push(Terrain.RIVER);
+      else row.push(Terrain.PLAIN);
+    }
+    map.push(row);
+  }
+  // 确保中心区域有一个核心据点
+  map[5][4] = Terrain.CORE_FORT;
+  // 河流线
+  map[3][2] = Terrain.RIVER; map[3][3] = Terrain.RIVER; map[3][4] = Terrain.RIVER;
+  map[4][2] = Terrain.RIVER; map[4][3] = Terrain.RIVER;
+  map[7][5] = Terrain.TOWN;  map[7][6] = Terrain.TOWN;
+  map[2][7] = Terrain.VILLAGE; map[8][1] = Terrain.VILLAGE;
+  return map;
+}
+
+const terrainMap = generateTerrainMap(GRID_COLS, GRID_ROWS);
+
+// ---- Canvas ----
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function calcCanvasSize() {
+  const w = HEX_SIZE * Math.sqrt(3) * (GRID_COLS + 0.5);
+  const h = HEX_SIZE * 1.5 * GRID_ROWS + HEX_SIZE / 2;
+  canvas.width = Math.ceil(w) + 2;
+  canvas.height = Math.ceil(h) + 2;
+}
+calcCanvasSize();
+
+// ---- 坐标工具 ----
+function hexToPixel(q, r) {
+  const x = HEX_SIZE * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r);
+  const y = HEX_SIZE * (1.5 * r);
+  return { x: x + HEX_SIZE * Math.sqrt(3) / 2 + 1, y: y + HEX_SIZE + 1 };
+}
+
+function pixelToHex(px, py) {
+  const x = px - HEX_SIZE * Math.sqrt(3) / 2 - 1;
+  const y = py - HEX_SIZE - 1;
+  const q = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / HEX_SIZE;
+  const r = (2 / 3 * y) / HEX_SIZE;
+  return cubeRound(q, r);
+}
+
+function cubeRound(q, r) {
+  const s = -q - r;
+  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
+  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
+  if (dq > dr && dq > ds) rq = -rr - rs;
+  else if (dr > ds) rr = -rq - rs;
+  return { q: rq, r: rr };
+}
+
+function hexCorners(cx, cy) {
+  const corners = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.PI / 180 * (60 * i - 30);
+    corners.push({ x: cx + HEX_SIZE * Math.cos(angle), y: cy + HEX_SIZE * Math.sin(angle) });
+  }
+  return corners;
+}
+
+// ---- 图例 ----
+function buildLegend() {
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  for (const t of TERRAIN_LIST) {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `<div class="legend-color" style="background:${t.color}"></div>${t.name}`;
+    legend.appendChild(item);
+  }
+}
+buildLegend();
+
+// ---- 状态 ----
+let selectedHex = null;
+
+// ---- 绘制 ----
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let q = 0; q < GRID_COLS; q++) {
+      const center = hexToPixel(q, r);
+      const corners = hexCorners(center.x, center.y);
+      const t = terrainMap[r][q];
+
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
+      ctx.closePath();
+      ctx.fillStyle = t.color;
+      ctx.fill();
+      ctx.strokeStyle = '#333355';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 图标标识
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      let icon = '';
+      if (t.id === 'CORE_FORT') icon = '◆';
+      else if (t.id === 'TOWN') icon = '■';
+      else if (t.id === 'VILLAGE') icon = '•';
+      else if (t.id === 'RIVER') icon = '≈';
+      if (icon) ctx.fillText(icon, center.x, center.y);
+
+      // 选中高亮
+      if (selectedHex && selectedHex.q === q && selectedHex.r === r) {
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
+        ctx.closePath();
+        ctx.strokeStyle = '#ffff88';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+    }
+  }
+
+  const info = document.getElementById('info');
+  if (selectedHex) {
+    const t = terrainMap[selectedHex.r][selectedHex.q];
+    info.innerHTML = `(${selectedHex.q}, ${selectedHex.r}) — ${t.name} | 移动消耗: ${t.moveCost} | 防御: +${t.defense} | 全掩体: ${t.fullCover ? '是' : '否'}`;
+    info.style.color = '#88ffaa';
+  } else {
+    info.textContent = '点击格子查看地形属性';
+    info.style.color = '#888';
+  }
+}
+
+// ---- 交互 ----
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const hex = pixelToHex(e.clientX - rect.left, e.clientY - rect.top);
+  if (hex.q >= 0 && hex.q < GRID_COLS && hex.r >= 0 && hex.r < GRID_ROWS) {
+    selectedHex = hex;
+  } else {
+    selectedHex = null;
+  }
+  draw();
+});
+
+draw();
+</script>
+</body>
+</html>
