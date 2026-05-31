@@ -4,208 +4,81 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PoC 01 — 六角格地图</title>
+<link rel="stylesheet" href="../../lib/ui.css">
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: #1a1a2e;
-  color: #e0e0e0;
-  font-family: 'Courier New', monospace;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px;
-}
-h1 { font-size: 18px; margin-bottom: 12px; color: #a0a0c0; }
-#info {
-  margin-top: 12px;
-  font-size: 14px;
-  color: #888;
-  min-height: 20px;
-}
-canvas {
-  border: 1px solid #333;
-  cursor: pointer;
-}
+  .legend { display:flex; gap:16px; margin-top:10px; flex-wrap:wrap; justify-content:center; font-size:12px; color:#aaa; }
+  .legend span { display:inline-flex; align-items:center; gap:4px; }
+  .swatch { width:14px; height:14px; border:1px solid #555; border-radius:2px; }
 </style>
 </head>
 <body>
 <h1>PoC 01 — 六角格地图渲染</h1>
+<div class="sub">悬停或点击格查看坐标</div>
 <canvas id="canvas"></canvas>
 <div id="info">悬停或点击格子查看坐标</div>
+<div class="legend" id="legend"></div>
+<script src="../../lib/hex.js"></script>
 <script>
-// ---- 配置 ----
-const HEX_SIZE = 30;
-const GRID_COLS = 9;
-const GRID_ROWS = 11;
-const LAYOUT = 'pointy';
+const CFG = { hexSize: 30, cols: 9, rows: 11 };
 
-// ---- 颜色 ----
-const COLORS = {
-  bg: '#2a2a3e',
-  grid: '#444466',
-  hover: 'rgba(100, 140, 255, 0.3)',
-  selected: 'rgba(100, 255, 140, 0.4)',
-  text: '#a0a0c0',
-  coord: '#666688',
-};
-
-// ---- Canvas 设置 ----
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-// 计算画布尺寸
-function calcCanvasSize() {
-  const w = HEX_SIZE * Math.sqrt(3) * (GRID_COLS + 0.5);
-  const h = HEX_SIZE * 1.5 * GRID_ROWS + HEX_SIZE / 2;
-  canvas.width = Math.ceil(w) + 2;
-  canvas.height = Math.ceil(h) + 2;
-}
-calcCanvasSize();
-
-// ---- 坐标工具 ----
-function hexToPixel(q, r) {
-  const x = HEX_SIZE * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r);
-  const y = HEX_SIZE * (1.5 * r);
-  return { x: x + HEX_SIZE * Math.sqrt(3) / 2 + 1, y: y + HEX_SIZE + 1 };
+function resize() {
+  const s = Hex.canvasSize(CFG.cols, CFG.rows, CFG.hexSize);
+  canvas.width = s.width; canvas.height = s.height;
+  draw();
 }
 
-function pixelToHex(px, py) {
-  const x = px - HEX_SIZE * Math.sqrt(3) / 2 - 1;
-  const y = py - HEX_SIZE - 1;
-  const q = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / HEX_SIZE;
-  const r = (2 / 3 * y) / HEX_SIZE;
-  return cubeRound(q, r);
-}
+let hovered = null, selected = null;
 
-function cubeRound(q, r) {
-  const s = -q - r;
-  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
-  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds) rr = -rq - rs;
-  return { q: rq, r: rr };
-}
-
-// ---- 六角格顶点 ----
-function hexCorners(cx, cy) {
-  const corners = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = Math.PI / 180 * (60 * i - 30);
-    corners.push({
-      x: cx + HEX_SIZE * Math.cos(angle),
-      y: cy + HEX_SIZE * Math.sin(angle),
-    });
-  }
-  return corners;
-}
-
-// ---- 状态 ----
-let hoveredHex = null;
-let selectedHex = null;
-let message = '';
-
-// ---- 绘制 ----
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = COLORS.bg;
+  ctx.fillStyle = '#2a2a3e';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  for (let r = 0; r < GRID_ROWS; r++) {
-    for (let q = 0; q < GRID_COLS; q++) {
-      const center = hexToPixel(q, r);
-      const corners = hexCorners(center.x, center.y);
+  Hex.eachCell(CFG.cols, CFG.rows, (q, r) => {
+    const c = Hex.hexToPixel(q, r, CFG.hexSize);
+    Hex.path(ctx, c.x, c.y, CFG.hexSize);
 
-      // 填充
-      ctx.beginPath();
-      ctx.moveTo(corners[0].x, corners[0].y);
-      for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
-      ctx.closePath();
-      ctx.fillStyle = COLORS.grid;
-      ctx.fill();
-      ctx.strokeStyle = '#555577';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+    let fill = '#444466';
+    if (selected && selected.q === q && selected.r === r) fill = 'rgba(100,255,140,0.4)';
+    else if (hovered && hovered.q === q && hovered.r === r) fill = 'rgba(100,140,255,0.3)';
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = '#555577';
+    ctx.lineWidth = 1;
+    ctx.stroke();
 
-      // 悬停高亮
-      if (hoveredHex && hoveredHex.q === q && hoveredHex.r === r) {
-        ctx.beginPath();
-        ctx.moveTo(corners[0].x, corners[0].y);
-        for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
-        ctx.closePath();
-        ctx.fillStyle = COLORS.hover;
-        ctx.fill();
-      }
+    ctx.fillStyle = '#666688';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${q},${r}`, c.x, c.y + 1);
+  });
 
-      // 选中高亮
-      if (selectedHex && selectedHex.q === q && selectedHex.r === r) {
-        ctx.beginPath();
-        ctx.moveTo(corners[0].x, corners[0].y);
-        for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
-        ctx.closePath();
-        ctx.fillStyle = COLORS.selected;
-        ctx.fill();
-      }
-
-      // 坐标文字
-      ctx.fillStyle = COLORS.coord;
-      ctx.font = '10px monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`${q},${r}`, center.x, center.y + 1);
-    }
-  }
-
-  // 更新信息栏
   const info = document.getElementById('info');
-  if (selectedHex) {
-    info.textContent = `选中: (${selectedHex.q}, ${selectedHex.r})${message}`;
-    info.style.color = '#88ffaa';
-  } else if (hoveredHex) {
-    info.textContent = `悬停: (${hoveredHex.q}, ${hoveredHex.r})`;
-    info.style.color = '#88aaff';
-  } else {
-    info.textContent = '悬停或点击格子查看坐标';
-    info.style.color = '#888';
-  }
+  if (selected) { info.textContent = `选中: (${selected.q}, ${selected.r})`; info.style.color = '#88ffaa'; }
+  else if (hovered) { info.textContent = `悬停: (${hovered.q}, ${hovered.r})`; info.style.color = '#88aaff'; }
+  else { info.textContent = '悬停或点击格子查看坐标'; info.style.color = '#888'; }
 }
 
-// ---- 交互 ----
-canvas.addEventListener('mousemove', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const hex = pixelToHex(e.clientX - rect.left, e.clientY - rect.top);
-  if (hex.q >= 0 && hex.q < GRID_COLS && hex.r >= 0 && hex.r < GRID_ROWS) {
-    hoveredHex = hex;
-  } else {
-    hoveredHex = null;
-  }
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  const h = Hex.pixelToHex(e.clientX - r.left, e.clientY - r.top, CFG.hexSize);
+  hovered = (h.q >= 0 && h.q < CFG.cols && h.r >= 0 && h.r < CFG.rows) ? h : null;
   draw();
 });
-
-canvas.addEventListener('mouseleave', () => {
-  hoveredHex = null;
+canvas.addEventListener('mouseleave', () => { hovered = null; draw(); });
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect();
+  const h = Hex.pixelToHex(e.clientX - r.left, e.clientY - r.top, CFG.hexSize);
+  selected = (h.q >= 0 && h.q < CFG.cols && h.r >= 0 && h.r < CFG.rows) ? h : null;
   draw();
 });
+window.addEventListener('resize', resize);
 
-canvas.addEventListener('click', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const hex = pixelToHex(e.clientX - rect.left, e.clientY - rect.top);
-  if (hex.q >= 0 && hex.q < GRID_COLS && hex.r >= 0 && hex.r < GRID_ROWS) {
-    selectedHex = hex;
-    message = '';
-  } else {
-    selectedHex = null;
-    message = '';
-  }
-  draw();
-});
-
-// ---- 窗口缩放 ----
-window.addEventListener('resize', () => {
-  calcCanvasSize();
-  draw();
-});
-
-draw();
+resize();
 </script>
 </body>
 </html>

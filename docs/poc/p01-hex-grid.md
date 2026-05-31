@@ -70,6 +70,8 @@ HexCell {
 
 **文件**：`examples/p01-hex-grid/index.html`
 
+**依赖**：`lib/hex.js`, `lib/ui.css`
+
 **状态**：✓ 验收标准全部通过
 
 **实际实现**：
@@ -77,10 +79,11 @@ HexCell {
 - 立方体坐标 (q, r, s) 完整实现，`hexToPixel` / `pixelToHex` / `cubeRound`
 - 悬停高亮（蓝色）+ 点击选中（绿色）+ 坐标文字显示
 - 窗口缩放通过监听 `resize` 事件重绘（未使用 viewBox，Canvas 直接重算尺寸）
+- 重构后：依赖 `lib/hex.js`，代码从 211 行缩减到 ~80 行
 
 **偏差**：
 - 计划用 viewBox 实现缩放，实际使用 `resize` 事件 + 重绘，更简单且避免 Canvas 模糊
-- 未使用 `HexGrid` 类封装（直接在函数中实现），原型阶段函数式更轻量
+- 未使用 `HexGrid` 类封装，使用 `Hex` 命名空间对象暴露函数
 
 **经验**：
 - 9x11 网格性能无压力，Canvas 2D 是正确选择

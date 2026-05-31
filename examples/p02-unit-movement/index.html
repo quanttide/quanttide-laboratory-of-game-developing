@@ -4,42 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PoC 02 — 单位移动</title>
+<link rel="stylesheet" href="../../lib/ui.css">
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  background: #1a1a2e;
-  color: #e0e0e0;
-  font-family: 'Courier New', monospace;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 20px;
-}
-h1 { font-size: 18px; margin-bottom: 4px; color: #a0a0c0; }
-.sub { font-size: 12px; color: #666; margin-bottom: 12px; }
-canvas { border: 1px solid #333; cursor: pointer; }
-#info {
-  margin-top: 10px;
-  font-size: 14px;
-  min-height: 20px;
-  text-align: center;
-}
-#legend {
-  display: flex;
-  gap: 12px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-  justify-content: center;
-  font-size: 12px;
-  color: #aaa;
-}
-.dot {
-  display: inline-block;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  margin-right: 3px;
-  vertical-align: middle;
-}
+  .legend { display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; justify-content:center; font-size:12px; color:#aaa; }
+  .dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:3px; vertical-align:middle; }
 </style>
 </head>
 <body>
@@ -47,223 +15,67 @@ canvas { border: 1px solid #333; cursor: pointer; }
 <div class="sub">点击单位选择 → 显示移动范围 → 点击目标格移动</div>
 <canvas id="canvas"></canvas>
 <div id="info">选择一个己方单位(蓝色)查看移动范围</div>
-<div id="legend">
+<div class="legend">
   <span><span class="dot" style="background:#4488cc"></span>己方</span>
   <span><span class="dot" style="background:#cc4444"></span>敌方</span>
-  <span><span class="dot" style="background:rgba(100,255,140,0.3)"></span>可达范围</span>
+  <span><span class="dot" style="background:rgba(100,255,140,0.3)"></span>可达</span>
   <span><span class="dot" style="background:#ffff88"></span>选中</span>
+  <span><span class="dot" style="background:#ff8800"></span>已行动</span>
 </div>
+<script src="../../lib/hex.js"></script>
+<script src="../../lib/terrain.js"></script>
+<script src="../../lib/unit.js"></script>
 <script>
-// ---- 配置 ----
-const HEX_SIZE = 28;
-const GRID_COLS = 9;
-const GRID_ROWS = 11;
+const CFG = { hexSize: 28, cols: 9, rows: 11 };
+const terrainMap = TerrainLib.defaultMap9x11();
+const getCost = (q, r) => TerrainLib.fromIndex(terrainMap, q, r).moveCost;
+const getColor = (q, r) => TerrainLib.fromIndex(terrainMap, q, r).color;
 
-// ---- 地形 ----
-const Terrain = {
-  PLAIN:     { moveCost: 1, defense: 0, color: '#5a8a5a' },
-  VILLAGE:   { moveCost: 1, defense: 1, color: '#8a7a5a' },
-  TOWN:      { moveCost: 2, defense: 2, color: '#7a6a4a' },
-  RIVER:     { moveCost: 4, defense: 0, color: '#4a6a8a' },
-  CORE_FORT: { moveCost: 3, defense: 4, color: '#8a4a4a' },
-};
-
-// ---- 地形地图 ----
-const MAP = [
-  [0,0,0,0,0,0,0,0,0],
-  [0,0,0,0,0,0,0,1,0],
-  [0,0,3,0,0,0,0,1,0],
-  [0,0,3,3,3,0,0,0,0],
-  [0,0,3,3,0,0,0,2,0],
-  [0,0,0,0,1,4,0,2,0],
-  [0,1,0,0,1,0,0,0,0],
-  [0,1,0,0,0,2,2,0,0],
-  [0,0,0,0,0,0,0,0,0],
-  [0,0,0,1,0,0,0,0,0],
-  [0,0,0,0,0,0,0,0,0],
-];
-const TERRAIN = [Terrain.PLAIN, Terrain.VILLAGE, Terrain.TOWN, Terrain.RIVER, Terrain.CORE_FORT];
-
-function getTerrain(q, r) {
-  return TERRAIN[MAP[r]?.[q] ?? 0];
-}
-
-// ---- 单位 ----
-const UnitSide = { BLUE: 0, RED: 1 };
-const UNIT_COLORS = ['#4488cc', '#cc4444'];
-
-let units = [
-  { id: 0, side: UnitSide.BLUE, q: 1, r: 5, movePoints: 4, hasActed: false },
-  { id: 1, side: UnitSide.BLUE, q: 2, r: 4, movePoints: 3, hasActed: false },
-  { id: 2, side: UnitSide.BLUE, q: 0, r: 6, movePoints: 6, hasActed: false },
-  { id: 3, side: UnitSide.RED,  q: 7, r: 3, movePoints: 4, hasActed: false },
-  { id: 4, side: UnitSide.RED,  q: 6, r: 5, movePoints: 4, hasActed: false },
+const units = [
+  UnitLib.create(UnitLib.SIDES.BLUE, 1, 5, 4),
+  UnitLib.create(UnitLib.SIDES.BLUE, 2, 4, 3),
+  UnitLib.create(UnitLib.SIDES.BLUE, 0, 6, 6),
+  UnitLib.create(UnitLib.SIDES.RED,  7, 3, 4),
+  UnitLib.create(UnitLib.SIDES.RED,  6, 5, 4),
 ];
 
-// ---- Canvas ----
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+let sel = null, range = null;
 
-function calcCanvasSize() {
-  const w = HEX_SIZE * Math.sqrt(3) * (GRID_COLS + 0.5);
-  const h = HEX_SIZE * 1.5 * GRID_ROWS + HEX_SIZE / 2;
-  canvas.width = Math.ceil(w) + 2;
-  canvas.height = Math.ceil(h) + 2;
-}
-calcCanvasSize();
-
-// ---- 坐标 ----
-function hexToPixel(q, r) {
-  const x = HEX_SIZE * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r);
-  const y = HEX_SIZE * (1.5 * r);
-  return { x: x + HEX_SIZE * Math.sqrt(3) / 2 + 1, y: y + HEX_SIZE + 1 };
+function resize() {
+  const s = Hex.canvasSize(CFG.cols, CFG.rows, CFG.hexSize);
+  canvas.width = s.width; canvas.height = s.height;
+  draw();
 }
 
-function pixelToHex(px, py) {
-  const x = px - HEX_SIZE * Math.sqrt(3) / 2 - 1;
-  const y = py - HEX_SIZE - 1;
-  const q = (Math.sqrt(3) / 3 * x - 1 / 3 * y) / HEX_SIZE;
-  const r = (2 / 3 * y) / HEX_SIZE;
-  return cubeRound(q, r);
-}
-
-function cubeRound(q, r) {
-  const s = -q - r;
-  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
-  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds) rr = -rq - rs;
-  return { q: rq, r: rr };
-}
-
-function hexCorners(cx, cy) {
-  const corners = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = Math.PI / 180 * (60 * i - 30);
-    corners.push({ x: cx + HEX_SIZE * Math.cos(angle), y: cy + HEX_SIZE * Math.sin(angle) });
-  }
-  return corners;
-}
-
-// ---- BFS 移动范围 ----
-function getOccupiedHexes() {
-  const set = new Set();
-  for (const u of units) {
-    if (u.alive !== false) set.add(`${u.q},${u.r}`);
-  }
-  return set;
-}
-
-function calcMoveRange(unit) {
-  const occupied = getOccupiedHexes();
-  const visited = new Map();
-  const key = (q, r) => `${q},${r}`;
-  visited.set(key(unit.q, unit.r), 0);
-  const queue = [{ q: unit.q, r: unit.r }];
-
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    const curCost = visited.get(key(cur.q, cur.r));
-    const neighbors = [
-      { q: cur.q + 1, r: cur.r },     { q: cur.q - 1, r: cur.r },
-      { q: cur.q,     r: cur.r + 1 }, { q: cur.q,     r: cur.r - 1 },
-      { q: cur.q + 1, r: cur.r - 1 }, { q: cur.q - 1, r: cur.r + 1 },
-    ];
-    for (const n of neighbors) {
-      if (n.q < 0 || n.q >= GRID_COLS || n.r < 0 || n.r >= GRID_ROWS) continue;
-      if (occupied.has(key(n.q, n.r)) && !(n.q === unit.q && n.r === unit.r)) continue;
-      const t = getTerrain(n.q, n.r);
-      const newCost = curCost + t.moveCost;
-      if (newCost <= unit.movePoints && (!visited.has(key(n.q, n.r)) || newCost < visited.get(key(n.q, n.r)))) {
-        visited.set(key(n.q, n.r), newCost);
-        queue.push(n);
-      }
-    }
-  }
-  return visited;
-}
-
-// ---- 状态 ----
-let selectedUnit = null;
-let moveRange = null;
-let hoveredHex = null;
-
-// ---- 绘制 ----
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#1a1a2e';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const occupied = getOccupiedHexes();
+  const occ = UnitLib.occupiedSet(units);
 
-  // 绘制地形 + 移动范围
-  for (let r = 0; r < GRID_ROWS; r++) {
-    for (let q = 0; q < GRID_COLS; q++) {
-      const center = hexToPixel(q, r);
-      const corners = hexCorners(center.x, center.y);
-      const t = getTerrain(q, r);
+  Hex.eachCell(CFG.cols, CFG.rows, (q, r) => {
+    const c = Hex.hexToPixel(q, r, CFG.hexSize);
+    Hex.path(ctx, c.x, c.y, CFG.hexSize);
 
-      ctx.beginPath();
-      ctx.moveTo(corners[0].x, corners[0].y);
-      for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
-      ctx.closePath();
-
-      // 移动范围高亮
-      if (moveRange && moveRange.has(`${q},${r}`) && !occupied.has(`${q},${r}`)) {
-        ctx.fillStyle = 'rgba(100, 255, 140, 0.25)';
-      } else {
-        ctx.fillStyle = t.color;
-      }
-      ctx.fill();
-      ctx.strokeStyle = '#333355';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // 当前格/选中格
-      if (moveRange && moveRange.has(`${q},${r}`) && occupied.has(`${q},${r}`)) {
-        ctx.beginPath();
-        ctx.moveTo(corners[0].x, corners[0].y);
-        for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
-        ctx.closePath();
-        ctx.fillStyle = 'rgba(255, 200, 100, 0.2)';
-        ctx.fill();
-      }
-    }
-  }
-
-  // 单位
-  for (const u of units) {
-    if (u.alive === false) continue;
-    const center = hexToPixel(u.q, u.r);
-    const r = HEX_SIZE * 0.35;
-
-    // 阴影
-    ctx.beginPath();
-    ctx.arc(center.x + 1, center.y + 1, r, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    let fill = getColor(q, r);
+    if (range && range.has(`${q},${r}`) && !occ.has(`${q},${r}`))
+      fill = 'rgba(100,255,140,0.25)';
+    ctx.fillStyle = fill;
     ctx.fill();
-
-    // 单位圆
-    ctx.beginPath();
-    ctx.arc(center.x, center.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = UNIT_COLORS[u.side];
-    ctx.fill();
-    ctx.strokeStyle = selectedUnit && selectedUnit.id === u.id ? '#ffff88' : '#fff';
-    ctx.lineWidth = selectedUnit && selectedUnit.id === u.id ? 3 : 1;
+    ctx.strokeStyle = '#333355';
+    ctx.lineWidth = 1;
     ctx.stroke();
+  });
 
-    // 移动力
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 10px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(u.movePoints, center.x, center.y);
-  }
+  for (const u of units)
+    UnitLib.draw(ctx, u, CFG.hexSize, sel && sel.id === u.id);
 
-  // 信息
   const info = document.getElementById('info');
-  if (selectedUnit) {
-    info.textContent = `已选: 单位 ${selectedUnit.id} (侧: ${selectedUnit.side === 0 ? '蓝' : '红'}) | 移动力: ${selectedUnit.movePoints} | 可达: ${moveRange ? moveRange.size - 1 : 0} 格`;
+  if (sel) {
+    info.textContent = `已选: 单位 ${sel.id} | 移动力: ${sel.movePoints} | 可达: ${range ? range.size - 1 : 0} 格`;
     info.style.color = '#88ffaa';
   } else {
     info.textContent = '点击蓝色单位选择，点击绿色格子移动';
@@ -271,42 +83,30 @@ function draw() {
   }
 }
 
-// ---- 交互 ----
-function findUnitAt(q, r) {
-  return units.find(u => u.q === q && u.r === r && u.alive !== false) || null;
-}
+canvas.addEventListener('click', e => {
+  const r = canvas.getBoundingClientRect();
+  const h = Hex.pixelToHex(e.clientX - r.left, e.clientY - r.top, CFG.hexSize);
+  if (h.q < 0 || h.q >= CFG.cols || h.r < 0 || h.r >= CFG.rows) { sel = null; range = null; draw(); return; }
 
-canvas.addEventListener('click', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const hex = pixelToHex(e.clientX - rect.left, e.clientY - rect.top);
-  if (hex.q < 0 || hex.q >= GRID_COLS || hex.r < 0 || hex.r >= GRID_ROWS) {
-    selectedUnit = null; moveRange = null; draw(); return;
-  }
-
-  const unit = findUnitAt(hex.q, hex.r);
-
-  if (unit && unit.side === UnitSide.BLUE) {
-    selectedUnit = unit;
-    moveRange = calcMoveRange(unit);
+  const unit = UnitLib.findAt(h.q, h.r, units);
+  if (unit && unit.side === UnitLib.SIDES.BLUE) {
+    sel = unit;
+    range = UnitLib.moveRange(unit, units, CFG.cols, CFG.rows, getCost);
     draw();
-  } else if (selectedUnit && moveRange && moveRange.has(`${hex.q},${hex.r}`)) {
-    const unitHere = findUnitAt(hex.q, hex.r);
-    if (!unitHere) {
-      selectedUnit.q = hex.q;
-      selectedUnit.r = hex.r;
-      selectedUnit.hasActed = true;
-      selectedUnit = null;
-      moveRange = null;
+  } else if (sel && range && range.has(`${h.q},${h.r}`)) {
+    if (!UnitLib.findAt(h.q, h.r, units)) {
+      sel.q = h.q; sel.r = h.r;
+      sel.hasActed = true;
+      sel = null; range = null;
       draw();
     }
   } else {
-    selectedUnit = null;
-    moveRange = null;
-    draw();
+    sel = null; range = null; draw();
   }
 });
 
-draw();
+window.addEventListener('resize', resize);
+resize();
 </script>
 </body>
 </html>
