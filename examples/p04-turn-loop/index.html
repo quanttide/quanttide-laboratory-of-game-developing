@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PoC 04 — 回合流程</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+}
+h1 { font-size: 18px; margin-bottom: 4px; color: #a0a0c0; }
+.info-bar {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #aaa;
+}
+.info-bar .phase {
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-weight: bold;
+}
+canvas { border: 1px solid #333; cursor: pointer; }
+#controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+button {
+  background: #333355;
+  color: #e0e0e0;
+  border: 1px solid #555577;
+  padding: 6px 16px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+button:hover { background: #444466; }
+button:disabled { opacity: 0.4; cursor: default; }
+#log {
+  margin-top: 10px;
+  width: 600px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: #888;
+  border-top: 1px solid #333;
+  padding-top: 6px;
+}
+#log div { padding: 2px 0; }
+#legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #aaa;
+}
+.dot {
+  display: inline-block;
+  width: 12px; height: 12px; border-radius: 50%; margin-right: 3px; vertical-align: middle;
+}
+</style>
+</head>
+<body>
+<h1>PoC 04 — 回合流程</h1>
+<div class="info-bar">
+  <span>回合: <b id="turnDisplay">1</b> / 12</span>
+  <span>阶段: <span id="phaseDisplay" class="phase">ASSESSMENT</span></span>
+  <span>己方单位: <b id="unitCount">0</b></span>
+</div>
+<canvas id="canvas"></canvas>
+<div id="controls">
+  <button id="btnAssess">📋 评估</button>
+  <button id="btnCommand">⚔ 命令</button>
+  <button id="btnSign">✍ 签署</button>
+  <button id="btnEndTurn">⏭ 结束回合</button>
+</div>
+<div id="legend">
+  <span><span class="dot" style="background:#4488cc"></span>己方</span>
+  <span><span class="dot" style="background:#cc4444"></span>敌方</span>
+  <span><span class="dot" style="background:rgba(100,255,140,0.3)"></span>可达</span>
+  <span><span class="dot" style="background:#ff8800"></span>已行动</span>
+</div>
+<div id="log"><div style="color:#666">=== 游戏开始 ===</div></div>
+<script>
+// ---- 配置 ----
+const MAX_TURNS = 12;
+const HEX_SIZE = 26;
+const GRID_COLS = 9;
+const GRID_ROWS = 7;
+
+// ---- 阶段 ----
+const Phase = {
+  ASSESSMENT: 0,
+  INTENT: 1,
+  COMMAND: 2,
+  SIGNING: 3,
+  EXECUTION: 4,
+  ENEMY_TURN: 5,
+  GAME_OVER: 6,
+};
+
+const PHASE_NAMES = ['评估', '意图', '命令', '签署', '执行', '敌方回合', '结束'];
+
+// ---- 地形 ----
+const TERRAINS = [
+  { color: '#5a8a5a', moveCost: 1 },  // 平原
+  { color: '#8a7a5a', moveCost: 1 },  // 村庄
+  { color: '#7a6a4a', moveCost: 2 },  // 城镇
+  { color: '#4a6a8a', moveCost: 4 },  // 河流
+  { color: '#8a4a4a', moveCost: 3 },  // 核心
+];
+const MAP = [
+  [0,0,0,0,0,0,0,0,0],
+  [0,1,0,0,0,0,0,0,0],
+  [0,0,3,0,0,0,0,2,0],
+  [0,0,3,4,0,1,0,2,0],
+  [0,0,3,0,0,0,0,0,0],
+  [0,1,0,0,0,0,1,0,0],
+  [0,0,0,0,0,0,0,0,0],
+];
+
+function getTerrain(q, r) { return TERRAINS[MAP[r]?.[q] ?? 0]; }
+
+// ---- 单位 ----
+let nextUnitId = 0;
+function createUnit(side, q, r, movePts) {
+  return { id: nextUnitId++, side, q, r, movePoints: movePts, hasActed: false, alive: true };
+}
+
+const units = [
+  createUnit(0, 1, 1, 4),
+  createUnit(0, 2, 5, 3),
+  createUnit(0, 0, 3, 5),
+  createUnit(1, 7, 3, 4),
+  createUnit(1, 6, 2, 4),
+  createUnit(1, 7, 4, 4),
+];
+
+// ---- 游戏状态 ----
+let state = {
+  turn: 1,
+  phase: Phase.ASSESSMENT,
+  selectedUnit: null,
+  moveRange: null,
+  log: [],
+  winner: null,
+};
+
+// ---- Canvas ----
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+function calcCanvasSize() {
+  const w = HEX_SIZE * Math.sqrt(3) * (GRID_COLS + 0.5);
+  const h = HEX_SIZE * 1.5 * GRID_ROWS + HEX_SIZE / 2;
+  canvas.width = Math.ceil(w) + 2;
+  canvas.height = Math.ceil(h) + 2;
+}
+calcCanvasSize();
+
+// ---- 坐标 ----
+function hexToPixel(q, r) {
+  const x = HEX_SIZE * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r);
+  const y = HEX_SIZE * (1.5 * r);
+  return { x: x + HEX_SIZE * Math.sqrt(3) / 2 + 1, y: y + HEX_SIZE + 1 };
+}
+function pixelToHex(px, py) {
+  const x = px - HEX_SIZE * Math.sqrt(3) / 2 - 1;
+  const y = py - HEX_SIZE - 1;
+  return cubeRound((Math.sqrt(3)/3*x - 1/3*y)/HEX_SIZE, (2/3*y)/HEX_SIZE);
+}
+function cubeRound(q, r) {
+  const s = -q - r;
+  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
+  const dq = Math.abs(rq-q), dr = Math.abs(rr-r), ds = Math.abs(rs-s);
+  if (dq>dr && dq>ds) rq = -rr-rs;
+  else if (dr>ds) rr = -rq-rs;
+  return { q: rq, r: rr };
+}
+function hexCorners(cx, cy) {
+  const c = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI/180*(60*i-30);
+    c.push({ x: cx+HEX_SIZE*Math.cos(a), y: cy+HEX_SIZE*Math.sin(a) });
+  }
+  return c;
+}
+
+// ---- BFS ----
+function calcMoveRange(unit) {
+  const occ = new Set();
+  for (const u of units) if (u.alive) occ.add(`${u.q},${u.r}`);
+  const visited = new Map();
+  visited.set(`${unit.q},${unit.r}`, 0);
+  const queue = [{ q: unit.q, r: unit.r }];
+  while (queue.length) {
+    const cur = queue.shift();
+    const curC = visited.get(`${cur.q},${cur.r}`);
+    const nb = [
+      {q:cur.q+1,r:cur.r},{q:cur.q-1,r:cur.r},{q:cur.q,r:cur.r+1},
+      {q:cur.q,r:cur.r-1},{q:cur.q+1,r:cur.r-1},{q:cur.q-1,r:cur.r+1},
+    ];
+    for (const n of nb) {
+      if (n.q<0||n.q>=GRID_COLS||n.r<0||n.r>=GRID_ROWS) continue;
+      if (occ.has(`${n.q},${n.r}`) && !(n.q===unit.q&&n.r===unit.r)) continue;
+      const c = curC + getTerrain(n.q,n.r).moveCost;
+      if (c <= unit.movePoints && (!visited.has(`${n.q},${n.r}`) || c < visited.get(`${n.q},${n.r}`))) {
+        visited.set(`${n.q},${n.r}`, c);
+        queue.push(n);
+      }
+    }
+  }
+  return visited;
+}
+
+// ---- AI 回合 ----
+function aiTurn() {
+  addLog('--- 敌方回合 ---');
+  const enemies = units.filter(u => u.side === 1 && u.alive);
+  for (const e of enemies) {
+    const targets = units.filter(u => u.side === 0 && u.alive);
+    if (targets.length === 0) break;
+    const nearest = targets.reduce((a, b) => {
+      const da = Math.abs(a.q-e.q)+Math.abs(a.r-e.r);
+      const db = Math.abs(b.q-e.q)+Math.abs(b.r-e.r);
+      return da<db ? a : b;
+    });
+    // 简单移动：向最近目标靠近一格
+    const dx = Math.sign(nearest.q - e.q);
+    const dy = Math.sign(nearest.r - e.r);
+    const nq = e.q + dx;
+    const nr = e.r + dy;
+    if (nq>=0&&nq<GRID_COLS&&nr>=0&&nr<GRID_ROWS) {
+      const occ = new Set();
+      for (const u of units) if (u.alive) occ.add(`${u.q},${u.r}`);
+      if (!occ.has(`${nq},${nr}`)) {
+        e.q = nq; e.r = nr;
+        addLog(`敌方单位 ${e.id} 移动到 (${nq},${nr})`);
+      }
+    }
+    e.hasActed = true;
+  }
+  // 重置行动状态
+  for (const u of units) u.hasActed = false;
+  state.turn++;
+  if (state.turn > MAX_TURNS) {
+    state.phase = Phase.GAME_OVER;
+    state.winner = 'timeout';
+    addLog('=== 回合上限到达，战斗结束 ===');
+  } else {
+    state.phase = Phase.ASSESSMENT;
+    addLog(`--- 第 ${state.turn} 回合 ---`);
+  }
+  updateUI();
+  draw();
+}
+
+// ---- 日志 ----
+function addLog(msg) {
+  state.log.push(msg);
+  const logDiv = document.getElementById('log');
+  const entry = document.createElement('div');
+  entry.textContent = msg;
+  logDiv.appendChild(entry);
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+// ---- UI 更新 ----
+function updateUI() {
+  document.getElementById('turnDisplay').textContent = state.turn;
+  const pd = document.getElementById('phaseDisplay');
+  pd.textContent = PHASE_NAMES[state.phase];
+  const phaseColors = ['#888', '#88aaff', '#88ffaa', '#ffaa44', '#ff6644', '#cc4444', '#ff0000'];
+  pd.style.background = phaseColors[state.phase];
+
+  const alive = units.filter(u => u.side === 0 && u.alive).length;
+  document.getElementById('unitCount').textContent = alive;
+
+  const inCommand = state.phase === Phase.COMMAND;
+  document.getElementById('btnAssess').disabled = state.phase !== Phase.ASSESSMENT;
+  document.getElementById('btnCommand').disabled = state.phase !== Phase.INTENT;
+  document.getElementById('btnSign').disabled = state.phase !== Phase.COMMAND || units.filter(u=>u.side===0&&u.alive&&!u.hasActed).length > 0;
+  document.getElementById('btnEndTurn').disabled = state.phase !== Phase.COMMAND;
+}
+
+// ---- 绘制 ----
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const occ = new Set();
+  for (const u of units) if (u.alive) occ.add(`${u.q},${u.r}`);
+
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let q = 0; q < GRID_COLS; q++) {
+      const c = hexToPixel(q, r);
+      const corners = hexCorners(c.x, c.y);
+      const t = getTerrain(q, r);
+
+      ctx.beginPath();
+      ctx.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
+      ctx.closePath();
+
+      let fillColor = t.color;
+      if (state.moveRange && state.moveRange.has(`${q},${r}`) && !occ.has(`${q},${r}`)) {
+        fillColor = 'rgba(100,255,140,0.25)';
+      }
+      ctx.fillStyle = fillColor;
+      ctx.fill();
+      ctx.strokeStyle = '#333355';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+
+  for (const u of units) {
+    if (!u.alive) continue;
+    const c = hexToPixel(u.q, u.r);
+    const r = HEX_SIZE * 0.35;
+
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = u.side === 0 ? '#4488cc' : '#cc4444';
+    ctx.fill();
+    ctx.strokeStyle = state.selectedUnit && state.selectedUnit.id === u.id ? '#ffff88' : '#fff';
+    ctx.lineWidth = state.selectedUnit && state.selectedUnit.id === u.id ? 3 : 1;
+    ctx.stroke();
+
+    if (u.hasActed && u.side === 0) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r + 3, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ff8800';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(u.movePoints, c.x, c.y);
+  }
+
+  // 游戏结束
+  if (state.phase === Phase.GAME_OVER) {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('游戏结束', canvas.width/2, canvas.height/2);
+  }
+}
+
+// ---- 交互 ----
+canvas.addEventListener('click', (e) => {
+  if (state.phase !== Phase.COMMAND) return;
+  const rect = canvas.getBoundingClientRect();
+  const hex = pixelToHex(e.clientX - rect.left, e.clientY - rect.top);
+  if (hex.q < 0 || hex.q >= GRID_COLS || hex.r < 0 || hex.r >= GRID_ROWS) {
+    state.selectedUnit = null; state.moveRange = null; draw(); return;
+  }
+
+  const unit = units.find(u => u.q === hex.q && u.r === hex.r && u.alive && u.side === 0);
+  if (unit && !unit.hasActed) {
+    state.selectedUnit = unit;
+    state.moveRange = calcMoveRange(unit);
+    draw();
+  } else if (state.selectedUnit && state.moveRange && state.moveRange.has(`${hex.q},${hex.r}`)) {
+    const occ = new Set();
+    for (const u of units) if (u.alive) occ.add(`${u.q},${u.r}`);
+    if (!occ.has(`${hex.q},${hex.r}`)) {
+      state.selectedUnit.q = hex.q;
+      state.selectedUnit.r = hex.r;
+      state.selectedUnit.hasActed = true;
+      addLog(`单位 ${state.selectedUnit.id} 移动到 (${hex.q},${hex.r})`);
+      state.selectedUnit = null;
+      state.moveRange = null;
+      draw();
+    }
+  } else {
+    state.selectedUnit = null; state.moveRange = null; draw();
+  }
+});
+
+// ---- 按钮 ----
+document.getElementById('btnAssess').addEventListener('click', () => {
+  state.phase = Phase.INTENT;
+  addLog('评估完成，进入意图选择');
+  updateUI();
+});
+document.getElementById('btnCommand').addEventListener('click', () => {
+  state.phase = Phase.COMMAND;
+  addLog('意图确定，进入命令阶段');
+  updateUI();
+});
+document.getElementById('btnSign').addEventListener('click', () => {
+  state.phase = Phase.EXECUTION;
+  addLog('命令签署完毕，进入执行阶段');
+  setTimeout(() => {
+    state.phase = Phase.ENEMY_TURN;
+    updateUI();
+    aiTurn();
+    draw();
+  }, 800);
+  updateUI();
+});
+document.getElementById('btnEndTurn').addEventListener('click', () => {
+  if (state.phase === Phase.COMMAND) {
+    state.selectedUnit = null;
+    state.moveRange = null;
+    state.phase = Phase.SIGNING;
+    addLog('命令完成，进入签署阶段');
+    // 检查是否还有未行动单位
+    const remaining = units.filter(u => u.side === 0 && u.alive && !u.hasActed);
+    if (remaining.length > 0) {
+      addLog(`⚠ ${remaining.length} 个单位未行动，自动跳过`);
+      for (const u of remaining) u.hasActed = true;
+    }
+    document.getElementById('btnSign').disabled = false;
+    updateUI();
+    draw();
+  }
+});
+
+updateUI();
+draw();
+</script>
+</body>
+</html>
